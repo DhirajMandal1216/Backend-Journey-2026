@@ -254,3 +254,256 @@ Express automatically handles:
 - `req.params`, `req.query`, `req.body`
 - `res.json()`, `res.status()`
 - Rebuilding today's server in Express — half the code, twice as clean
+
+
+
+NODE.JS DAY 2 — Express.js Basics
+
+
+What is Express?
+
+Express is a minimal web framework built on top of Node's raw http module.
+It makes building APIs dramatically cleaner:
+
+javascript// Raw Node.js — verbose, manual
+if (req.method === "GET" && req.url === "/users") {
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ users: [...] }));
+}
+
+// Express — clean, readable
+app.get("/users", (req, res) => {
+  res.json({ users: [...] });
+});
+
+Express automatically handles:
+
+
+Method checking → app.get(), app.post()
+Status 200 → set by default
+JSON.stringify() → done by res.json()
+res.end() → called automatically by res.json()
+
+
+
+Project Setup
+
+bashmkdir my-project
+cd my-project
+npm init -y           # creates package.json
+npm install express   # installs Express
+npm install nodemon --save-dev  # auto-restart on file save
+
+package.json scripts:
+
+json"scripts": {
+  "start": "node app.js",
+  "dev":   "nodemon app.js"
+}
+
+bashnpm run dev   # development — auto restarts
+npm start     # production
+
+Always create .gitignore:
+
+node_modules/
+.env
+
+Never push node_modules to GitHub — it's huge and unnecessary.
+
+
+Basic Express Server
+
+javascriptconst express = require("express");
+const app = express();
+
+// Middleware — ALWAYS at the top before routes
+app.use(express.json()); // parse incoming JSON bodies
+
+// Routes
+app.get("/", (req, res) => {
+  res.json({ message: "Welcome to my Express API!" });
+});
+
+// Start server
+app.listen(3000, () => {
+  console.log("Server running on http://localhost:3000");
+});
+
+
+The Four HTTP Methods — CRUD Mapping
+
+HTTP MethodCRUDUse forGETReadFetch dataPOSTCreateSend new dataPUTUpdateReplace existing dataDELETEDeleteRemove data
+
+javascriptapp.get("/users", (req, res) => { });     // get all
+app.get("/users/:id", (req, res) => { }); // get one
+app.post("/users", (req, res) => { });    // create
+app.put("/users/:id", (req, res) => { }); // update
+app.delete("/users/:id", (req, res) => { }); // delete
+
+
+req.params — URL Parameters
+
+Identify a specific resource in the URL:
+
+javascriptapp.get("/users/:id", (req, res) => {
+  const id = Number(req.params.id); // always convert to number!
+  res.json({ id });
+});
+
+// Multiple params
+app.get("/users/:userId/orders/:orderId", (req, res) => {
+  const { userId, orderId } = req.params;
+  res.json({ userId, orderId });
+});
+
+Test: http://localhost:3000/users/5 → id = "5" (string, convert with Number())
+
+Rule: req.params values are always strings — convert to number when comparing with IDs.
+
+
+req.query — Query Strings
+
+Optional extra info after ? — used for filtering, sorting, pagination:
+
+javascriptapp.get("/users", (req, res) => {
+  const page  = Number(req.query.page)  ?? 1;
+  const limit = Number(req.query.limit) ?? 10;
+  const sort  = req.query.sort;
+
+  res.json({ page, limit, sort });
+});
+
+Test: http://localhost:3000/users?page=1&limit=10&sort=name
+
+
+req.body — Request Body
+
+Data sent in POST/PUT requests — requires express.json() middleware:
+
+javascriptapp.use(express.json()); // MUST be before routes
+
+app.post("/users", (req, res) => {
+  const { name, email, age } = req.body;
+
+  if (!name || !email) {
+    return res.status(400).json({ error: "Name and email required" });
+  }
+
+  const newUser = { id: Date.now(), name, email, age };
+  users.push(newUser);
+
+  res.status(201).json({ message: "User created", data: newUser });
+});
+
+
+res Methods — Sending Responses
+
+javascriptres.json({ message: "Success" });              // send JSON
+res.status(201).json({ message: "Created" });  // status + JSON
+res.status(404).json({ error: "Not found" });  // error response
+res.send("Hello World");                        // plain text
+res.status(204).send();                         // no content (delete)
+
+HTTP Status Codes to memorize:
+
+CodeMeaningUse when200OKSuccessful GET, PUT201CreatedSuccessful POST204No ContentSuccessful DELETE400Bad RequestMissing or invalid input401UnauthorizedNot logged in403ForbiddenLogged in but no permission404Not FoundResource doesn't exist500Server ErrorSomething crashed
+
+
+Complete CRUD API Pattern
+
+javascriptconst express = require("express");
+const app = express();
+
+app.use(express.json()); // ✅ middleware first
+
+let users = [
+  { id: 1, name: "Dhiraj", email: "dhiraj@gmail.com", age: 25 },
+  { id: 2, name: "Rahul",  email: "rahul@gmail.com",  age: 30 },
+];
+
+// GET all
+app.get("/api/users", (req, res) => {
+  res.status(200).json({ message: "Users fetched", data: users });
+});
+
+// GET one
+app.get("/api/users/:id", (req, res) => {
+  const id = Number(req.params.id);
+  const user = users.find((u) => u.id === id);
+
+  if (!user) return res.status(404).json({ message: "User not found" }); // ✅ return
+
+  res.status(200).json({ message: "User fetched", data: user });
+});
+
+// POST create
+app.post("/api/users", (req, res) => {
+  const { name, email, age } = req.body;
+
+  if (!name || !email) {
+    return res.status(400).json({ message: "Name and email required" });
+  }
+
+  const newUser = { id: Date.now(), name, email, age };
+  users.push(newUser); // ✅ actually save to array
+
+  res.status(201).json({ message: "User created", data: newUser });
+});
+
+// PUT update
+app.put("/api/users/:id", (req, res) => {
+  const id = Number(req.params.id);
+  const userIndex = users.findIndex((u) => u.id === id);
+
+  if (userIndex === -1) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  const { name, email, age } = req.body;
+  users[userIndex] = { ...users[userIndex], name, email, age }; // ✅ merge
+
+  res.status(200).json({ message: "User updated", data: users[userIndex] });
+});
+
+// DELETE
+app.delete("/api/users/:id", (req, res) => {
+  const id = Number(req.params.id);
+  const userIndex = users.findIndex((u) => u.id === id);
+
+  if (userIndex === -1) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  users.splice(userIndex, 1); // ✅ actually remove
+
+  res.status(200).json({ message: "User deleted" });
+});
+
+app.listen(3000, () => console.log("Server running on http://localhost:3000"));
+
+
+Key Rules to Remember (Express Day 2)
+
+
+Always put app.use(express.json()) at the TOP — before all routes
+Always return before res.json() inside if blocks — or code keeps running
+req.params.id is always a string — convert with Number() before comparing
+req.body only works when express.json() middleware is added
+users.push(newUser) — POST must actually save to array
+findIndex returns -1 when not found — check for -1 not null
+users.splice(index, 1) — DELETE must actually remove from array
+{ ...users[index], name, email } — PUT merges old and new data
+Date.now() — quick way to generate unique IDs (use MongoDB ObjectId in real apps)
+Test every route in Postman — browser can only test GET routes
+
+
+
+Coming Up — Node.js Day 3: Middleware & Error Handling
+
+
+What middleware is and how next() works
+Writing custom middleware (logger, auth guard)
+Global error handling middleware
+Connecting custom error classes to Express
+Proper error responses with status codes

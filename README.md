@@ -507,3 +507,332 @@ Writing custom middleware (logger, auth guard)
 Global error handling middleware
 Connecting custom error classes to Express
 Proper error responses with status codes
+
+
+NODE.JS DAY 3 — Middleware and Error Handling
+
+
+What is Middleware?
+
+Middleware is a function that runs between the request arriving and the response being sent.
+
+Request comes in
+      ↓
+Middleware 1 (logger)      → calls next()
+      ↓
+Middleware 2 (auth check)  → calls next()
+      ↓
+Route Handler              → sends response
+      ↓
+Response goes out
+
+Middleware signature — three parameters:
+
+javascript(req, res, next) => {
+  // do something with request
+  next(); // MUST call next() or request hangs forever
+}
+
+next() tells Express "I'm done, pass the request forward". Forgetting next() = request hangs forever — same as forgetting res.end() in raw Node.js.
+
+
+Types of Middleware
+
+1. Application-level — runs for ALL routes:
+
+javascriptapp.use((req, res, next) => {
+  // runs for every single request
+  next();
+});
+
+2. Route-level — runs for specific routes only:
+
+javascriptapp.get("/dashboard", checkAuth, (req, res) => {
+  res.json({ message: "Welcome" });
+});
+
+3. Built-in middleware:
+
+javascriptapp.use(express.json());                        // parse JSON bodies
+app.use(express.urlencoded({ extended: true })); // parse form data
+app.use(express.static("public"));              // serve static files
+
+4. Error handling — special 4-parameter signature:
+
+javascript(err, req, res, next) => { } // must have all 4 params
+
+
+Logger Middleware
+
+javascriptconst logger = (req, res, next) => {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] ${req.method} ${req.url}`);
+  next(); // always call next
+};
+
+app.use(logger); // apply to all routes
+
+Output:
+
+[2026-07-15T05:30:00.000Z] GET /api/users
+[2026-07-15T05:30:01.000Z] POST /api/users
+
+
+Auth (protect) Middleware
+
+javascriptconst protect = (req, res, next) => {
+  const token = req.headers.authorization; // req.headers (plural) not req.header
+
+  if (!token) {
+    return res.status(401).json({ message: "Unauthorized — token missing" });
+  }
+
+  req.user = { id: 1, name: "Dhiraj" }; // attach user to request
+  next();
+};
+
+// Apply to specific routes only
+app.put("/api/users/:id", protect, (req, res, next) => { ... });
+app.delete("/api/users/:id", protect, (req, res, next) => { ... });
+
+// Apply to all routes under a path
+app.use("/api/admin", protect);
+
+Key pattern: Middleware can attach data to req — route handlers can then access it via req.user, req.data etc.
+
+
+Validation Middleware
+
+javascriptconst validateUser = (req, res, next) => {
+  const { name, email } = req.body;
+
+  if (!name) return res.status(400).json({ message: "Name is required" });
+  if (!email) return res.status(400).json({ message: "Email is required" });
+  if (!email.includes("@")) return res.status(400).json({ message: "Invalid email" });
+
+  next(); // validation passed
+};
+
+app.post("/api/users", validateUser, (req, res) => {
+  // if we reach here, input is guaranteed valid
+});
+
+
+Error Handling Middleware
+
+Special 4-parameter middleware — Express knows it's an error handler because of the 4th param. Must always be the last middleware registered.
+
+javascriptapp.use((err, req, res, next) => {
+  console.error(`[ERROR] ${err.name}: ${err.message}`);
+
+  res.status(err.statusCode || 500).json({
+    success: false,
+    error: {
+      name: err.name,
+      message: err.message,
+    },
+  });
+});
+
+How errors reach the error handler:
+
+javascript// Option 1 — next(err) in route handler
+app.get("/api/users/:id", (req, res, next) => {
+  const user = users.find((u) => u.id === id);
+  if (!user) return next(new NotFoundError("User not found")); // goes to error handler
+  res.json({ data: user });
+});
+
+// Option 2 — next(err) in try/catch
+app.get("/api/users/:id", async (req, res, next) => {
+  try {
+    const user = await getUserById(id);
+    res.json({ data: user });
+  } catch (err) {
+    next(err); // passes to error handler
+  }
+});
+
+
+Custom Error Classes + Express
+
+javascript// errors/AppError.js
+class AppError extends Error {
+  constructor(message, statusCode) {
+    super(message);
+    this.statusCode = statusCode;
+    this.name = "AppError";
+  }
+}
+
+class NotFoundError extends AppError {
+  constructor(message) {
+    super(message, 404);
+    this.name = "NotFoundError";
+  }
+}
+
+class ValidationError extends AppError {
+  constructor(message) {
+    super(message, 400);
+    this.name = "ValidationError";
+  }
+}
+
+module.exports = { AppError, NotFoundError, ValidationError };
+
+javascript// In routes
+const { NotFoundError, ValidationError } = require("./errors/AppError");
+
+app.get("/api/users/:id", (req, res, next) => {
+  const user = users.find((u) => u.id === id);
+  if (!user) return next(new NotFoundError("User not found")); // clean!
+  res.json({ data: user });
+});
+
+
+404 Wildcard Route
+
+Catches any URL that doesn't match your routes:
+
+javascript// After ALL routes, before error handler
+app.use("*", (req, res, next) => {
+  next(new NotFoundError(`Route ${req.method} ${req.url} not found`));
+});
+
+
+Correct Middleware Order — Always Follow This
+
+javascriptconst app = express();
+
+// 1. Built-in middleware
+app.use(express.json());
+
+// 2. Custom application middleware
+app.use(logger);
+
+// 3. Routes
+app.get("/api/users", ...);
+app.post("/api/users", ...);
+app.put("/api/users/:id", protect, ...);    // route-level middleware
+app.delete("/api/users/:id", protect, ...); // route-level middleware
+
+// 4. 404 handler — after all routes
+app.use("*", (req, res, next) => {
+  next(new NotFoundError(`Route ${req.method} ${req.url} not found`));
+});
+
+// 5. Global error handler — always LAST
+app.use((err, req, res, next) => {
+  res.status(err.statusCode || 500).json({
+    success: false,
+    error: { name: err.name, message: err.message }
+  });
+});
+
+
+Complete app.js Pattern
+
+javascriptconst express = require("express");
+const { NotFoundError, ValidationError } = require("./errors/AppError");
+
+const app = express();
+app.use(express.json());
+
+let users = [
+  { id: 1, name: "Dhiraj", email: "dhiraj@gmail.com", age: 25 },
+  { id: 2, name: "Rahul",  email: "rahul@gmail.com",  age: 30 },
+];
+
+// Logger
+const logger = (req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  next();
+};
+
+// Auth guard
+const protect = (req, res, next) => {
+  const token = req.headers.authorization;
+  if (!token) return res.status(401).json({ message: "Unauthorized — token missing" });
+  req.user = { id: 1, name: "Dhiraj" };
+  next();
+};
+
+app.use(logger);
+
+app.get("/api/users", (req, res) => {
+  res.status(200).json({ data: users });
+});
+
+app.get("/api/users/:id", (req, res, next) => {
+  const user = users.find((u) => u.id === Number(req.params.id));
+  if (!user) return next(new NotFoundError("User not found"));
+  res.status(200).json({ data: user });
+});
+
+app.post("/api/users", (req, res, next) => {
+  const { name, email, age } = req.body;
+  if (!name || !email) return next(new ValidationError("Name and email required"));
+  const newUser = { id: Date.now(), name, email, age };
+  users.push(newUser);
+  res.status(201).json({ data: newUser });
+});
+
+app.put("/api/users/:id", protect, (req, res, next) => {
+  const userIndex = users.findIndex((u) => u.id === Number(req.params.id));
+  if (userIndex === -1) return next(new NotFoundError("User not found"));
+  const { name, email, age } = req.body;
+  users[userIndex] = { ...users[userIndex], name, email, age };
+  res.status(200).json({ data: users[userIndex] });
+});
+
+app.delete("/api/users/:id", protect, (req, res, next) => {
+  const userIndex = users.findIndex((u) => u.id === Number(req.params.id));
+  if (userIndex === -1) return next(new NotFoundError("User not found"));
+  users.splice(userIndex, 1);
+  res.status(200).json({ message: "User deleted successfully" });
+});
+
+// 404 handler
+app.use("*", (req, res, next) => {
+  next(new NotFoundError(`Route ${req.method} ${req.url} not found`));
+});
+
+// Global error handler — always last
+app.use((err, req, res, next) => {
+  console.error(`[ERROR] ${err.name}: ${err.message}`);
+  res.status(err.statusCode || 500).json({
+    success: false,
+    error: { name: err.name, message: err.message }
+  });
+});
+
+app.listen(3000, () => console.log("Server running on http://localhost:3000"));
+
+
+Key Rules to Remember (Day 3)
+
+
+Middleware order matters — express.json() → custom middleware → routes → 404 → error handler
+Always call next() in middleware — or request hangs forever
+Add next as third param in route handlers when using next(err)
+req.headers (plural) — not req.header
+return next(err) — always return to stop code execution after passing error
+Error handler needs exactly 4 params (err, req, res, next) — Express identifies it by 4 params
+404 wildcard app.use("*", ...) must come BEFORE error handler
+Error handler must be LAST — after all routes and 404 handler
+next(new NotFoundError()) — pass custom error instances to keep statusCode
+req.user — middleware can attach data to req for route handlers to use
+return res.status(401).json() in middleware — always return to stop execution
+Route-level middleware — pass as second argument: app.get("/path", middleware, handler)
+
+
+
+Coming Up — Node.js Day 4: Router and Service Pattern
+
+
+Splitting routes into separate files with express.Router()
+Controllers — separating route logic
+Services — business logic layer
+Professional folder structure
+Connecting everything into a clean architecture

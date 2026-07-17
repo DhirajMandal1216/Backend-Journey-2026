@@ -836,3 +836,331 @@ Controllers — separating route logic
 Services — business logic layer
 Professional folder structure
 Connecting everything into a clean architecture
+
+NODE.JS DAY 4 — Router and Service Pattern
+
+
+The Problem With One File
+
+Everything in app.js works for 2 routes but becomes unreadable at scale.
+Solution: split into separate files with one clear responsibility each.
+
+
+Professional Folder Structure
+
+project/
+├── app.js                  ← entry point, sets up express
+├── package.json
+├── .env                    ← environment variables
+├── .gitignore
+│
+├── routes/
+│   └── userRoutes.js       ← only URL definitions
+│
+├── controller/
+│   └── userController.js   ← only req/res handling
+│
+├── service/
+│   └── userService.js      ← only business logic
+│
+├── middleware/
+│   ├── logger.js           ← logger middleware
+│   └── protect.js          ← auth middleware
+│
+└── errors/
+    └── AppError.js         ← custom error classes
+
+Single Responsibility Principle — each file has one job only.
+
+
+Express Router
+
+express.Router() creates mini-apps — groups of routes mounted at a path:
+
+javascript// routes/userRoutes.js
+const express = require("express");
+const router = express.Router();
+
+router.get("/", getAllUsers);       // GET /api/users
+router.get("/:id", getUserById);   // GET /api/users/:id
+router.post("/", createUser);      // POST /api/users
+router.put("/:id", protect, updateUser);    // PUT /api/users/:id
+router.delete("/:id", protect, deleteUser); // DELETE /api/users/:id
+
+module.exports = router;
+
+javascript// app.js
+app.use("/api/users", userRouter); // prefix added automatically
+
+Routes inside the file use / and /:id — the /api/users prefix is added when mounted.
+
+
+The Full Request Flow
+
+Request: GET /api/users/1
+         ↓
+app.js   → express.json() → logger → /api/users router
+         ↓
+userRoutes.js → matches /:id → calls getUserById controller
+         ↓
+userController.js → calls userService.getUserById(1)
+         ↓
+userService.js → finds user → throws NotFoundError if missing
+         ↓
+userController.js → res.json({ data: user })
+         ↓
+Response sent ✅
+
+If error thrown:
+         ↓
+next(err) → global error handler → res.status(404).json({ error })
+
+
+Controllers — req/res only
+
+javascript// controller/userController.js
+const userService = require("../service/userService");
+
+const getAllUsers = async (req, res, next) => {
+  try {
+    const users = await userService.getAllUsers();
+    res.status(200).json({ success: true, data: users });
+  } catch (err) {
+    next(err); // pass ALL errors to error handler
+  }
+};
+
+const getUserById = async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const user = await userService.getUserById(id);
+    res.status(200).json({ success: true, data: user });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const createUser = async (req, res, next) => {
+  try {
+    const { name, email, age } = req.body;
+    const user = await userService.createUser({ name, email, age });
+    res.status(201).json({ success: true, data: user });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const updateUser = async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const user = await userService.updateUser(id, req.body);
+    res.status(200).json({ success: true, data: user });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const deleteUser = async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    await userService.deleteUser(id);
+    res.status(200).json({ success: true, message: "User deleted" });
+  } catch (err) {
+    next(err);
+  }
+};
+
+module.exports = { getAllUsers, getUserById, createUser, updateUser, deleteUser };
+
+Controller rules:
+
+
+No business logic — only req/res handling
+Always async with try/catch
+Always next(err) in catch — never handle errors here
+Number(req.params.id) — always convert to number
+
+
+
+Services — business logic only
+
+javascript// service/userService.js
+const { NotFoundError, ValidationError } = require("../errors/AppError");
+
+let users = [
+  { id: 1, name: "Dhiraj", email: "dhiraj@gmail.com", age: 25 },
+  { id: 2, name: "Rahul",  email: "rahul@gmail.com",  age: 30 },
+];
+
+const getAllUsers = async () => {
+  return users;
+};
+
+const getUserById = async (id) => {
+  const user = users.find((u) => u.id === id);
+  if (!user) throw new NotFoundError(`User with id ${id} not found`);
+  return user;
+};
+
+const createUser = async ({ name, email, age }) => {
+  if (!name)  throw new ValidationError("Name is required");
+  if (!email) throw new ValidationError("Email is required");
+  const newUser = { id: Date.now(), name, email, age };
+  users.push(newUser);
+  return newUser;
+};
+
+const updateUser = async (id, data) => {
+  const userIndex = users.findIndex((u) => u.id === id);
+  if (userIndex === -1) throw new NotFoundError(`User with id ${id} not found`);
+  const { name, email, age } = data;
+  users[userIndex] = { ...users[userIndex], name, email, age };
+  return users[userIndex];
+};
+
+const deleteUser = async (id) => {
+  const userIndex = users.findIndex((u) => u.id === id);
+  if (userIndex === -1) throw new NotFoundError(`User with id ${id} not found`);
+  users.splice(userIndex, 1);
+};
+
+module.exports = { getAllUsers, getUserById, createUser, updateUser, deleteUser };
+
+Service rules:
+
+
+No req, no res, no next — pure business logic only
+Always throw errors — never next()
+Controller catches thrown errors and passes to next(err)
+
+
+
+Middleware Files
+
+javascript// middleware/logger.js
+const logger = (req, res, next) => {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] ${req.method} ${req.url}`);
+  next();
+};
+module.exports = logger; // default export
+
+javascript// middleware/protect.js
+const protect = (req, res, next) => {
+  const token = req.headers.authorization;
+  if (!token) {
+    return res.status(401).json({ message: "Unauthorized — token missing" });
+  }
+  req.user = { id: 1, name: "Dhiraj" };
+  next();
+};
+module.exports = protect; // default export
+
+Import default exports without curly braces:
+
+javascriptconst protect = require("../middleware/protect"); // ✅ no { }
+const { protect } = require("../middleware/protect"); // ❌ gets undefined
+
+
+Clean app.js
+
+javascriptrequire("dotenv").config(); // always first
+
+const express = require("express");
+const { NotFoundError } = require("./errors/AppError");
+const logger = require("./middleware/logger");
+const userRouter = require("./routes/userRoutes");
+
+const app = express();
+
+// Middleware
+app.use(express.json());
+app.use(logger);
+
+// Routes
+app.use("/api/users", userRouter);
+
+// 404 handler — Express 5 syntax
+app.use("/{*splat}", (req, res, next) => {
+  next(new NotFoundError(`Route ${req.method} ${req.url} not found`));
+});
+
+// Global error handler — always last
+app.use((err, req, res, next) => {
+  console.error(`[Error] ${err.name}: ${err.message}`);
+  res.status(err.statusCode || 500).json({
+    success: false,
+    error: {
+      name: err.name,
+      message: err.message,
+    },
+  });
+});
+
+app.listen(process.env.PORT || 3000, () => {
+  console.log(`Server running on http://localhost:${process.env.PORT || 3000}`);
+});
+
+
+dotenv — Environment Variables
+
+bashnpm install dotenv
+
+javascript// .env file
+PORT=3000
+DB_URL=mongodb://localhost:27017/mydb
+JWT_SECRET=mysecretkey
+
+javascript// app.js — always first line
+require("dotenv").config(); // loads .env into process.env
+
+// Use anywhere in your app
+const port = process.env.PORT ?? 3000;
+const dbUrl = process.env.DB_URL;
+
+Rules:
+
+
+require("dotenv").config() — no need to store in variable
+Always first line in app.js — before any other imports
+Never commit .env to GitHub — add to .gitignore
+
+
+
+Express 4 vs Express 5 — Wildcard Syntax
+
+javascript// Express 4 ❌ doesn't work in Express 5
+app.use("*", handler);
+
+// Express 5 ✅
+app.use("/{*splat}", handler);
+
+Check your version: npm list express
+
+
+Key Rules to Remember (Day 4)
+
+
+Each file has ONE job — routes, controller, service, middleware all separate
+Routes — only URL definitions and which controller handles them
+Controllers — only req/res handling, always async/try/catch/next(err)
+Services — only business logic, always throw never next()
+Default exports import without { }, named exports import with { }
+require("dotenv").config() — always first line, no need to store in variable
+Never commit .env to GitHub — add to .gitignore
+Express 5 wildcard is "/{*splat}" not "*"
+Number(req.params.id) — always in controller, params are always strings
+Router prefix added automatically — routes inside use / not /api/users
+module.exports = protect (default) vs module.exports = { protect } (named) — matters on import
+Controllers call services, services throw errors, controllers catch and pass to next(err)
+
+
+
+Coming Up — Node.js Day 5: MongoDB and Mongoose
+
+
+What is MongoDB — documents, collections
+Connecting with Mongoose
+Creating Schema and Model
+CRUD with Mongoose — find, findById, create, findByIdAndUpdate, findByIdAndDelete
+Replacing in-memory array with real database

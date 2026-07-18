@@ -1164,3 +1164,301 @@ Connecting with Mongoose
 Creating Schema and Model
 CRUD with Mongoose — find, findById, create, findByIdAndUpdate, findByIdAndDelete
 Replacing in-memory array with real database
+
+
+
+`NODE.JS DAY 5 — MongoDB and Mongoose`
+
+
+What is MongoDB?
+
+MongoDB is a NoSQL database — stores data as documents (JSON-like objects):
+
+SQL Database    →    MongoDB
+─────────────        ─────────────
+Table           →    Collection
+Row             →    Document
+Column          →    Field
+
+Document looks exactly like a JS object:
+
+json{
+  "_id": "64abc123...",
+  "name": "Dhiraj",
+  "email": "dhiraj@gmail.com",
+  "age": 25,
+  "createdAt": "2026-07-16T05:30:00.000Z"
+}
+
+Why MongoDB + Node.js — you're already working with JS objects everywhere.
+
+
+Setup
+
+bashnpm install mongoose
+
+# .env
+PORT=3000
+MONGO_URI=mongodb+srv://username:password@cluster.mongodb.net/myapp
+# OR local
+MONGO_URI=mongodb://localhost:27017/myapp
+
+
+Database Connection
+
+javascript// config/db.js
+const mongoose = require("mongoose");
+
+const connectDB = async () => {
+  try {
+    const conn = await mongoose.connect(process.env.MONGO_URI);
+    console.log(`MongoDB connected: ${conn.connection.host}`);
+  } catch (error) {
+    console.error("MongoDB connection failed:", error.message);
+    process.exit(1); // exit if DB fails — no point running without DB
+  }
+};
+
+module.exports = connectDB;
+
+javascript// app.js — call before starting server
+require("dotenv").config(); // always first
+const connectDB = require("./config/db");
+connectDB();
+
+
+Schema and Model
+
+Schema defines structure and validation rules:
+
+javascript// models/User.js
+const mongoose = require("mongoose");
+
+const userSchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: [true, "Name is required"],
+      trim: true,
+      minlength: [2, "Name must be at least 2 characters"],
+    },
+    email: {
+      type: String,
+      required: [true, "Email is required"],
+      unique: true,        // no duplicate emails
+      lowercase: true,     // auto converts to lowercase
+      trim: true,
+    },
+    age: {
+      type: Number,
+      min: [0, "Age cannot be negative"],
+      max: [120, "Age seems too high"],
+    },
+    role: {
+      type: String,
+      enum: ["user", "admin"], // only these values allowed
+      default: "user",
+    },
+  },
+  {
+    timestamps: true, // auto adds createdAt and updatedAt
+  }
+);
+
+const User = mongoose.model("User", userSchema);
+// "User" → collection name becomes "users" automatically
+
+module.exports = User;
+
+Schema field types: String, Number, Boolean, Date, Array, mongoose.Schema.Types.ObjectId
+
+
+CRUD with Mongoose
+
+javascript// CREATE
+const user = await User.create({ name: "Dhiraj", email: "dhiraj@gmail.com" });
+
+// READ ALL
+const users = await User.find();
+const users = await User.find({ role: "admin" }); // with filter
+
+// READ ONE
+const user = await User.findById("64abc123...");
+const user = await User.findOne({ email: "dhiraj@gmail.com" });
+
+// UPDATE — { new: true } returns updated doc not old one
+const user = await User.findByIdAndUpdate(id, data, { new: true });
+
+// DELETE
+await User.findByIdAndDelete(id);
+
+// COUNT
+const count = await User.countDocuments();
+
+
+Updated Service Layer — Real Database
+
+javascript// service/userService.js
+const User = require("../models/User"); // ✅ capital U — Model
+const { NotFoundError, ValidationError } = require("../errors/AppError");
+
+const getAllUsers = async () => {
+  return await User.find();
+};
+
+const getUserById = async (id) => {
+  const user = await User.findById(id); // ✅ User not users
+  if (!user) throw new NotFoundError(`User with id ${id} not found`);
+  return user;
+};
+
+const createUser = async ({ name, email, age }) => {
+  if (!name)  throw new ValidationError("Name is required");
+  if (!email) throw new ValidationError("Email is required");
+
+  const existing = await User.findOne({ email });
+  if (existing) throw new ValidationError("Email already in use");
+
+  return await User.create({ name, email, age });
+};
+
+const updateUser = async (id, data) => {
+  const user = await User.findByIdAndUpdate(id, data, { new: true });
+  if (!user) throw new NotFoundError(`User with id ${id} not found`);
+  return user;
+};
+
+const deleteUser = async (id) => {
+  const user = await User.findByIdAndDelete(id); // ✅ Mongoose method, not splice
+  if (!user) throw new NotFoundError(`User with id ${id} not found`);
+};
+
+module.exports = { getAllUsers, getUserById, createUser, updateUser, deleteUser };
+
+
+MongoDB ObjectId vs Number Id
+
+javascript// Old — in-memory array used number ids
+const id = Number(req.params.id); // ❌ not needed for MongoDB
+
+// New — MongoDB uses ObjectId (24-char string)
+const id = req.params.id; // ✅ keep as string
+
+// Validate ObjectId format to avoid crashes
+const mongoose = require("mongoose");
+if (!mongoose.Types.ObjectId.isValid(id)) {
+  return next(new NotFoundError("Invalid user id"));
+}
+
+
+Final Folder Structure
+
+project/
+├── app.js                  ← entry point
+├── package.json
+├── .env                    ← MONGO_URI, PORT, JWT_SECRET
+├── .gitignore              ← node_modules/, .env
+│
+├── config/
+│   └── db.js               ← database connection
+│
+├── models/
+│   └── User.js             ← Mongoose schema + model
+│
+├── routes/
+│   └── userRoutes.js       ← URL definitions only
+│
+├── controller/
+│   └── userController.js   ← req/res handling only
+│
+├── service/
+│   └── userService.js      ← business logic + DB calls
+│
+├── middleware/
+│   ├── logger.js
+│   └── protect.js
+│
+└── errors/
+    └── AppError.js
+
+
+Common Mongoose Mistakes
+
+javascript// ❌ Using array variable name instead of Model
+const user = await users.findById(id); // users doesn't exist
+const user = await User.findById(id);  // ✅ capital U Model
+
+// ❌ Using old array methods after switching to Mongoose
+users.findIndex(...);  // array method — doesn't work
+users.splice(...);     // array method — doesn't work
+User.findByIdAndDelete(id); // ✅ Mongoose method
+
+// ❌ Forgetting { new: true } in update
+await User.findByIdAndUpdate(id, data);          // returns OLD document
+await User.findByIdAndUpdate(id, data, { new: true }); // ✅ returns NEW document
+
+// ❌ Not checking if document was found after update/delete
+const user = await User.findByIdAndUpdate(id, data, { new: true });
+// user is null if not found — always check!
+if (!user) throw new NotFoundError("User not found");
+
+
+Key Rules to Remember (Day 5)
+
+
+MongoDB stores documents — JSON-like objects, not rows and columns
+mongoose.connect(process.env.MONGO_URI) — always in config/db.js
+process.exit(1) — exit if DB connection fails, no point running
+Schema defines structure + validation, Model is the interface to DB
+mongoose.model("User", userSchema) → collection name = "users" (auto)
+timestamps: true — auto adds createdAt and updatedAt to every document
+User.find() — all docs, User.findById(id) — one doc by ObjectId
+{ new: true } in findByIdAndUpdate — returns updated doc not old
+MongoDB ObjectId is a string — remove Number() conversion from controllers
+Always check if result is null after findById/findByIdAndUpdate/findByIdAndDelete
+User.findOne({ email }) — find by any field, not just id
+Only service layer changes when switching from array to DB — routes and controllers unchanged
+Capital User = Mongoose Model, lowercase users = old array — don't mix them up
+
+
+
+BACKEND JOURNEY COMPLETE! 🎉
+
+What You Built
+
+A fully working REST API with:
+
+
+Express server with proper middleware
+5 CRUD routes with validation and error handling
+Service pattern — clean separation of concerns
+MongoDB database with Mongoose
+Custom error classes with HTTP status codes
+Auth middleware protecting routes
+Professional folder structure
+
+
+Full Stack of What You Now Know
+
+JavaScript (Week 1)
+├── Variables, Scope, Types
+├── Functions, Closures, this
+├── Objects, Arrays, Classes
+├── Async, Promises, async/await
+└── Modules, Error Handling, Modern JS
+
+Node.js + Express (Week 2)
+├── Node.js fundamentals, fs, os, path
+├── Express — routes, middleware, req/res
+├── Error handling — custom errors, global handler
+├── Service Pattern — routes, controllers, services
+└── MongoDB + Mongoose — real database CRUD
+
+What's Next After This
+
+
+JWT Authentication — real login/logout with tokens
+Input Validation — joi or express-validator
+Pagination — limit/skip/page for large datasets
+File Uploads — multer
+Deployment — Railway, Render, or VPS

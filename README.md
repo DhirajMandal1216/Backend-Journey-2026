@@ -1462,3 +1462,140 @@ Input Validation — joi or express-validator
 Pagination — limit/skip/page for large datasets
 File Uploads — multer
 Deployment — Railway, Render, or VPS
+
+
+WEEK 3 — AUTHENTICATION AND SECURITY
+WEEK 3, DAY 1 — Password Hashing with bcrypt
+Why Never Store Plain Passwords
+
+Storing plain passwords is a critical security problem:
+
+Database hacked → hacker sees every user's plain password
+                → tries same password on Gmail, banking apps
+                → most people reuse passwords → massive damage
+
+Rule: Nobody — not even the developer — should ever see a user's password.
+What is Hashing?
+
+One-way transformation — converts password to fixed-length string. Cannot be reversed:
+
+"123456"    →  hash  →  "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lh"
+"password"  →  hash  →  "$2b$10$X4kv7j5ZcG39WgogSl16BeZZ2gzYvFKoKE17CuTWyFDwBBjRWCHe"
+
+Key properties:
+
+Same input     → always same output ✅
+Different input → completely different output ✅
+One way        → cannot reverse hash back to password ✅
+
+How login works with hashing:
+
+REGISTER:
+User sends "123456" → hash it → store hash → throw away original
+
+LOGIN:
+User sends "123456" → hash it → compare with stored hash
+→ match = correct ✅  |  no match = wrong ❌
+What is bcrypt?
+
+Most trusted password hashing library. Adds two important things:
+
+1. Salt — prevents rainbow table attacks:
+
+User 1: "123456" + random salt → "$2b$10$Abc..."
+User 2: "123456" + different salt → "$2b$10$Xyz..."
+Same password → completely different hashes ✅
+
+2. Salt Rounds — controls how slow hashing is:
+
+saltRounds = 10  → ~100ms  ← industry standard ✅
+saltRounds = 12  → ~400ms  ← more secure, slower
+saltRounds = 6   → ~10ms   ← too fast, easier to crack ❌
+
+Always use 10 in production.
+
+Setup
+bash
+npm install bcrypt
+Two Functions You Need
+javascript
+const bcrypt = require("bcrypt");
+
+// 1. HASHING — on register
+const hashed = await bcrypt.hash(plainPassword, 10);
+
+// 2. COMPARING — on login
+const isMatch = await bcrypt.compare(plainPassword, hashedPassword);
+// returns true or false
+Complete authService.js with bcrypt
+javascript
+const User = require("../models/User");
+const { ValidationError } = require("../errors/AppError");
+const bcrypt = require("bcrypt");
+
+const registerUser = async (data) => {
+  const { name, email, password } = data;
+
+  if (!name)     throw new ValidationError("Name is required");
+  if (!email)    throw new ValidationError("Email is required");
+  if (!password) throw new ValidationError("Password is required");
+
+  // ✅ Check duplicate BEFORE hashing — no point hashing if email exists
+  const existingUser = await User.findOne({ email });
+  if (existingUser) throw new ValidationError("Email already exists");
+
+  // ✅ Hash AFTER all validation passes
+  const hashedPassword = await bcrypt.hash(password, 10);
+
+  const user = await User.create({ ...data, password: hashedPassword });
+
+  // ✅ Never return password in response
+  return {
+    id: user._id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+  };
+};
+
+const loginUser = async (data) => {
+  const { email, password } = data;
+
+  if (!email)    throw new ValidationError("Email is required");
+  if (!password) throw new ValidationError("Password is required");
+
+  const user = await User.findOne({ email });
+  if (!user) throw new ValidationError("Invalid credentials"); // ✅ don't reveal which field is wrong
+
+  // ✅ Compare plain password with stored hash
+  const isMatch = await bcrypt.compare(password, user.password);
+  if (!isMatch) throw new ValidationError("Invalid credentials");
+
+  // ✅ Never return password in response
+  return {
+    id: user._id,
+    name: user.name,
+    email: user.email,
+  };
+};
+
+module.exports = { registerUser, loginUser };
+Key Rules to Remember (Week 3 Day 1)
+Never store plain passwords — always hash before saving
+bcrypt.hash(password, 10) — hash on register, saltRounds = 10
+bcrypt.compare(plain, hashed) — compare on login, returns true/false
+Check duplicate email BEFORE hashing — hashing is expensive (100ms)
+Never return password field in any response
+"Invalid credentials" — never say "user not found" or "wrong password" separately
+Wrong credentials = ValidationError (400) not NotFoundError (404)
+Salt is added automatically by bcrypt — you don't manage it manually
+Hashing is one-way — impossible to reverse, that's the whole point
+saltRounds below 10 = too fast = easier to brute force — always use 10+
+
+
+Coming Up — Week 3 Day 2: JWT Authentication
+What is a JWT token
+jwt.sign() — create token on login
+jwt.verify() — verify token in protect middleware
+Real protect middleware replacing fake tokens
+Sending token back to client on login

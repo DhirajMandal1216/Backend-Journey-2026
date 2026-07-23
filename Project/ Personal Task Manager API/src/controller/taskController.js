@@ -3,7 +3,7 @@ const taskService = require("../service/taskService");
 const getAllTask = async (req, res, next) => {
   try {
     const query = req.query;
-    const data = await taskService.getAllTask(query);
+    const data = await taskService.getAllTask(query,req.user);
     res.status(200).json({ data, message: "Task fetched successfully" });
   } catch (error) {
     next(error);
@@ -13,7 +13,7 @@ const getAllTask = async (req, res, next) => {
 const getTaskById = async (req, res, next) => {
   try {
     const id = req.params.id;
-    const data = await taskService.getTaskById(id);
+    const data = await taskService.getTaskById(id,req.user);
     res.status(200).json({ data, message: "Task fetched successfully" });
   } catch (error) {
     next(error)
@@ -32,7 +32,7 @@ const createTask = async (req, res, next) => {
 const updateTask = async (req, res, next) => {
   try {
     const id = req.params.id
-    const data = await taskService.updateTask(id,req.body);
+    const data = await taskService.updateTask(id,req.body,req.user);
     res.status(200).json({ data, message: "Task updated successfully" });
   } catch (error) {
     next(error)
@@ -42,7 +42,7 @@ const updateTask = async (req, res, next) => {
 const deleteTask = async (req, res, next) => {
   try {
     const id = req.params.id
-    const data = await taskService.deleteTask(id);
+    const data = await taskService.deleteTask(id,req.user);
     res.status(200).json({ data, message: "Task deleted successfully" });
   } catch (error) {
     next(error)

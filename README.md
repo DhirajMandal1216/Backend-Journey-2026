@@ -1599,3 +1599,478 @@ jwt.sign() — create token on login
 jwt.verify() — verify token in protect middleware
 Real protect middleware replacing fake tokens
 Sending token back to client on login
+
+
+WEEK 3, DAY 2 — JWT Authentication
+What is JWT?
+
+JWT = JSON Web Token — industry standard for API authentication.
+
+Old way (Sessions):
+
+User logs in → server stores session in DB → gives session ID
+Every request → server looks up session in DB → slow, doesn't scale
+
+JWT way:
+
+User logs in → server creates signed token → gives token to client
+Every request → server verifies token mathematically → no DB lookup needed ✅
+JWT Structure
+eyJhbGciOiJIUzI1NiJ9.eyJpZCI6IjY0YWJjMTIzIn0.SflKxwRJSMeKKF2QT4fwpMeJf
+       HEADER                  PAYLOAD                    SIGNATURE
+
+Header — algorithm used:
+
+json
+{ "alg": "HS256", "typ": "JWT" }
+
+Payload — your data:
+
+json
+{ "id": "64abc123", "role": "user", "iat": 1716000000, "exp": 1716086400 }
+
+Signature — proves token wasn't tampered with:
+
+HMACSHA256(base64(header) + "." + base64(payload), SECRET_KEY)
+
+If anyone changes the payload → signature becomes invalid → server rejects it.
+
+How JWT Works in Your API
+1. User sends login credentials
+2. Server verifies email + password (bcrypt)
+3. Server creates JWT → jwt.sign({ id, role }, SECRET, { expiresIn: "7d" })
+4. Server sends token back to client
+5. Client sends token in every protected request
+   Headers: { Authorization: "Bearer eyJhbG..." }
+6. protect middleware → jwt.verify(token, SECRET)
+7. Valid → attach user to req → continue
+   Invalid → 401 Unauthorized
+Setup
+bash
+npm install jsonwebtoken
+# .env
+JWT_SECRET=mysupersecretkey123makeitlongandrandom
+JWT_EXPIRES_IN=7d
+
+Generate a strong secret:
+
+bash
+node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
+Two Functions You Need
+javascript
+const jwt = require("jsonwebtoken");
+
+// 1. SIGN — create token on login/register
+const token = jwt.sign(
+  { id: user._id, role: user.role },  // payload
+  process.env.JWT_SECRET,              // secret key
+  { expiresIn: "7d" }                  // expiry
+);
+
+// 2. VERIFY — check token in protect middleware
+const decoded = jwt.verify(token, process.env.JWT_SECRET);
+// decoded = { id: "64abc123", role: "user", iat: ..., exp: ... }
+// throws JsonWebTokenError if invalid
+// throws TokenExpiredError if expired
+createToken Helper Function
+javascript
+// ✅ Must return the result of jwt.sign()
+const createToken = (user) => {
+  return jwt.sign(                      // return is critical!
+    { id: user._id, role: user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
+  );
+};
+
+// ✅ jwt.sign() is synchronous — no await needed
+const token = createToken(user); // not await createToken(user)
+
+Common mistakes:
+
+javascript
+// ❌ Missing return — function returns undefined
+const createToken = (user) => {
+  jwt.sign(...); // token created but thrown away
+};
+
+// ❌ Unnecessary await — jwt.sign is not async
+const token = await createToken(user);
+
+// ✅ Correct
+const createToken = (user) => {
+  return jwt.sign(...);
+};
+const token = createToken(user);
+Complete authService.js with JWT
+javascript
+const User = require("../models/User");
+const { ValidationError } = require("../errors/AppError");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+
+const createToken = (user) => {
+  return jwt.sign(
+    { id: user._id, role: user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
+  );
+};
+
+const registerUser = async (data) => {
+  const { name, email, password } = data;
+
+  if (!name)     throw new ValidationError("Name is required");
+  if (!email)    throw new ValidationError("Email is required");
+  if (!password) throw new ValidationError("Password is required");
+
+  const existingUser = await User.findOne({ email });
+  if (existingUser) throw new ValidationError("Email already exists");
+
+  const hashedPassword = await bcrypt.hash(password, 10);
+  const user = await User.create({ ...data, password: hashedPassword });
+
+  const token = createToken(user); // no await
+
+  return {
+    token,
+    user: {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    },
+  };
+};
+
+const loginUser = async (data) => {
+  const { email, password } = data;
+
+  if (!email)    throw new ValidationError("Email is required");
+  if (!password) throw new ValidationError("Password is required");
+
+  const user = await User.findOne({ email });
+  if (!user) throw new ValidationError("Invalid credentials");
+
+  const isMatch = await bcrypt.compare(password, user.password);
+  if (!isMatch) throw new ValidationError("Invalid credentials");
+
+  const token = createToken(user); // no await
+
+  return {
+    token,
+    user: {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    },
+  };
+};
+
+module.exports = { registerUser, loginUser };
+Real protect.js with JWT Verification
+javascript
+const jwt = require("jsonwebtoken");
+const User = require("../models/User");
+
+const protect = async (req, res, next) => {
+  try {
+    // 1. Get token from header
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized — no token provided"
+      });
+    }
+
+    // 2. Extract token — remove "Bearer " prefix
+    const token = authHeader.split(" ")[1];
+    // "Bearer eyJhbG..." → ["Bearer", "eyJhbG..."] → [1]
+
+    // 3. Verify token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // throws error if invalid or expired
+
+    // 4. Find user from decoded id
+    const user = await User.findById(decoded.id).select("-password");
+    // .select("-password") → all fields except password
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized — user no longer exists"
+      });
+    }
+
+    // 5. Attach user to request — available in all route handlers
+    req.user = user;
+    next();
+
+  } catch (error) {
+    return res.status(401).json({
+      success: false,
+      message: "Unauthorized — invalid or expired token"
+    });
+  }
+};
+
+module.exports = protect;
+How to Send Token in Postman
+Headers:
+Key:   Authorization
+Value: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+       ^^^^^^ space between Bearer and token
+Key Rules to Remember (Week 3 Day 2)
+JWT = stateless — server doesn't store token, just verifies it mathematically
+jwt.sign() is synchronous — never use await on it
+Always return jwt.sign(...) in createToken — missing return = undefined
+Use user._id not user.id in JWT payload — _id is explicit MongoDB field
+Token format in header: Bearer <token> — always with "Bearer " prefix + space
+authHeader.split(" ")[1] — extracts token, removes "Bearer " prefix
+.select("-password") — exclude password when fetching user in protect
+jwt.verify() throws error if token invalid/expired — wrap in try/catch
+After verify — always fetch fresh user from DB — token payload might be outdated
+JWT_SECRET must be long and random — never a simple word
+Store JWT_SECRET in .env — never hardcode in code
+req.user set in protect middleware — available in all route handlers after it
+
+
+
+Coming Up — Week 3 Day 3: Role Based Authorization
+Admin vs User roles
+Restrict routes based on role
+User can only edit their own tasks
+Admin can do everything
+
+
+
+
+WEEK 3, DAY 3 — Role Based Authorization
+Authentication vs Authorization
+Authentication  →  WHO are you?        (JWT token — Day 2)
+Authorization   →  WHAT can you do?    (roles — today)
+Role Based Access in Task Manager
+Admin
+→ can see ALL tasks from ALL users
+→ can update ANY task
+→ can delete ANY task
+
+User
+→ can only see THEIR OWN tasks
+→ can only update THEIR OWN tasks
+→ can only delete THEIR OWN tasks
+HTTP Status Codes — 401 vs 403
+401 Unauthorized  →  not logged in — no token or invalid token
+403 Forbidden     →  logged in BUT no permission for this action
+authorize Middleware
+
+Runs AFTER protect — checks user's role:
+
+javascript
+// middleware/authorize.js
+const authorize = (...roles) => {
+  return (req, res, next) => {
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: `Role '${req.user.role}' is not authorized to access this route`
+      });
+    }
+    next();
+  };
+};
+
+module.exports = authorize;
+
+Usage:
+
+javascript
+// protect first, then authorize
+router.get("/admin", protect, authorize("admin"), handler);
+router.get("/both",  protect, authorize("admin", "user"), handler);
+Request Flow with Authorization
+Request
+    ↓
+protect    → verifies JWT → attaches req.user
+    ↓
+authorize  → checks req.user.role → allows or blocks
+    ↓
+Controller → handles request
+Owner Check in Service Layer
+
+Role check alone is not enough — users should only access their OWN resources:
+
+javascript
+// Check ownership — admin bypasses, user must own the resource
+if (
+  requestingUser.role !== "admin" &&
+  task.owner.toString() !== requestingUser._id.toString()
+) {
+  throw new AppError("Not authorized to access this task", 403);
+}
+
+Why .toString()? MongoDB ObjectId is an object — comparing objects directly always returns false:
+
+javascript
+task.owner === requestingUser._id          // ❌ object comparison — always false
+task.owner.toString() === requestingUser._id.toString() // ✅ string comparison
+Updated taskService.js
+javascript
+const Task = require("../models/Task");
+const { ValidationError, NotFoundError, AppError } = require("../errors/AppError");
+
+const validStatus   = ["pending", "in-progress", "completed"];
+const validPriority = ["low", "medium", "high"];
+
+// Admin sees ALL tasks, user sees only their own
+const getAllTask = async (query, requestingUser) => {
+  const filter = {};
+  if (requestingUser.role !== "admin") {
+    filter.owner = requestingUser._id; // user only sees own tasks
+  }
+  if (query.status)   filter.status   = query.status;
+  if (query.priority) filter.priority = query.priority;
+  return await Task.find(filter);
+};
+
+// Owner or admin only
+const getTaskById = async (id, requestingUser) => {
+  const task = await Task.findById(id);
+  if (!task) throw new NotFoundError("Task not found");
+
+  if (
+    requestingUser.role !== "admin" &&
+    task.owner.toString() !== requestingUser._id.toString()
+  ) {
+    throw new AppError("Not authorized to access this task", 403);
+  }
+  return task;
+};
+
+// Always assigned to logged in user
+const createTask = async (userId, data) => {
+  const { title, description, status, priority } = data;
+  if (!title)       throw new ValidationError("Title is required");
+  if (!description) throw new ValidationError("Description is required");
+  if (status   && !validStatus.includes(status))
+    throw new ValidationError("Invalid status value");
+  if (priority && !validPriority.includes(priority))
+    throw new ValidationError("Invalid priority value");
+  return await Task.create({ ...data, owner: userId });
+};
+
+// Owner or admin only
+const updateTask = async (id, data, requestingUser) => {
+  const task = await Task.findById(id);
+  if (!task) throw new NotFoundError("Task not found");
+
+  if (
+    requestingUser.role !== "admin" &&
+    task.owner.toString() !== requestingUser._id.toString()
+  ) {
+    throw new AppError("Not authorized to update this task", 403);
+  }
+
+  const { status, priority } = data;
+  if (status   && !validStatus.includes(status))
+    throw new ValidationError("Invalid status value");
+  if (priority && !validPriority.includes(priority))
+    throw new ValidationError("Invalid priority value");
+
+  return await Task.findByIdAndUpdate(id, data, { new: true });
+};
+
+// Owner or admin only
+const deleteTask = async (id, requestingUser) => {
+  const task = await Task.findById(id);
+  if (!task) throw new NotFoundError("Task not found");
+
+  if (
+    requestingUser.role !== "admin" &&
+    task.owner.toString() !== requestingUser._id.toString()
+  ) {
+    throw new AppError("Not authorized to delete this task", 403);
+  }
+  await Task.findByIdAndDelete(id);
+};
+
+module.exports = { getAllTask, getTaskById, createTask, updateTask, deleteTask };
+Updated taskController.js
+javascript
+const taskService = require("../service/taskService");
+
+const getAllTask = async (req, res, next) => {
+  try {
+    const data = await taskService.getAllTask(req.query, req.user); // ✅ pass req.user
+    res.status(200).json({ data, message: "Tasks fetched successfully" });
+  } catch (error) { next(error); }
+};
+
+const getTaskById = async (req, res, next) => {
+  try {
+    const data = await taskService.getTaskById(req.params.id, req.user); // ✅
+    res.status(200).json({ data, message: "Task fetched successfully" });
+  } catch (error) { next(error); }
+};
+
+const createTask = async (req, res, next) => {
+  try {
+    const data = await taskService.createTask(req.user._id, req.body); // ✅
+    res.status(201).json({ data, message: "Task created successfully" });
+  } catch (error) { next(error); }
+};
+
+const updateTask = async (req, res, next) => {
+  try {
+    const data = await taskService.updateTask(req.params.id, req.body, req.user); // ✅
+    res.status(200).json({ data, message: "Task updated successfully" });
+  } catch (error) { next(error); }
+};
+
+const deleteTask = async (req, res, next) => {
+  try {
+    await taskService.deleteTask(req.params.id, req.user); // ✅
+    res.status(200).json({ message: "Task deleted successfully" });
+  } catch (error) { next(error); }
+};
+
+module.exports = { getAllTask, getTaskById, createTask, updateTask, deleteTask };
+Updated taskRoutes.js
+javascript
+const express = require("express");
+const router = express.Router();
+const protect   = require("../middleware/protect");
+const authorize = require("../middleware/authorize");
+const {
+  getAllTask, getTaskById, createTask, updateTask, deleteTask
+} = require("../controller/taskController");
+
+router.get("/",    protect, getAllTask);
+router.get("/:id", protect, getTaskById);
+router.post("/",   protect, createTask);
+router.put("/:id",    protect, updateTask);
+router.delete("/:id", protect, deleteTask);
+
+module.exports = router;
+Key Rules to Remember (Week 3 Day 3)
+Authentication = who you are, Authorization = what you can do
+401 = not logged in, 403 = logged in but no permission
+authorize(...roles) runs AFTER protect — always protect first
+authorize("admin", "user") — rest operator accepts multiple roles
+Owner check in SERVICE layer — not in controller or middleware
+.toString() on ObjectId before comparing — objects never equal directly
+Admin bypasses owner check — always check role first
+filter.owner = requestingUser._id — simple way to filter own resources
+Pass req.user from controller to service — service doesn't touch req/res
+AppError("message", 403) — use base AppError for 403 forbidden errors
+
+
+
+Coming Up — Week 3 Day 4: Input Validation with Joi
+Why manual if (!name) doesn't scale
+Joi schema validation
+Validation middleware — reusable across routes
+Clean error messages for every field

@@ -48,12 +48,6 @@ const getTaskById = async (id, requestingUser) => {
 const createTask = async (userId, data) => {
   const { title, status, description, priority } = data;
 
-  if (!title) {
-    throw new ValidationError("Name is required");
-  }
-  if (!description) {
-    throw new ValidationError("Description is required");
-  }
   if (status && !validStatus.includes(status)) {
     throw new ValidationError("Invalid status value");
   }

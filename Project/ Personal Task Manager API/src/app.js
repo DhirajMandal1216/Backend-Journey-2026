@@ -1,9 +1,17 @@
 const express = require("express");
+const {generalLimiter} = require("./middleware/rateLimiter");
+const cors = require("cors");
+const helmet = require("helmet");
 const logger = require("./middleware/logger");
 const { NotFoundError } = require("./errors/AppError");
 const userRouter = require("./routes/authRoutes");
 const taskRouter = require("./routes/taskRoutes");
+const corsOptions = require("./config/cors");
 const app = express();
+
+// security middleware
+app.use(cors(corsOptions));
+app.use(generalLimiter);
 
 app.use(express.json());
 app.use(logger);

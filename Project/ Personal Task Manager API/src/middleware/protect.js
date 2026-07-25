@@ -19,7 +19,7 @@ const protect = async (req, res, next) => {
     // "Bearer eyJhbG..." → ["Bearer", "eyJhbG..."] → [1] = "eyJhbG..."
 
     // 3. Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
     // decoded = { id: "64abc123", role: "user", iat: ..., exp: ... }
 
     // 4. Find user from decoded id

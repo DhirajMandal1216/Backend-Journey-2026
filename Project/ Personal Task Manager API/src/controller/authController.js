@@ -20,4 +20,28 @@ const loginUser = async (req, res, next) => {
   }
 };
 
-module.exports = {registerUser,loginUser}
+const refreshToken = async (req, res, next) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(401).json({
+        success: false,
+        message: "Refresh token is required",
+      });
+    }
+
+    const result = await authService.refreshAccessToken(
+      refreshToken
+    );
+
+    res.status(200).json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+module.exports = {registerUser,loginUser,refreshToken}

@@ -3,9 +3,19 @@ const { ValidationError, NotFoundError } = require("../errors/AppError");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
-const createToken = (user) => {
-  return jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || "7d",
+const createAccessToken = (user) => {
+  return jwt.sign(
+    { id: user._id, role: user.role },
+    process.env.JWT_ACCESS_SECRET,
+    {
+      expiresIn: process.env.JWT_ACCESS_EXPIRES_IN || "15m",
+    },
+  );
+};
+
+const createRefreshToken = (user) => {
+  return jwt.sign({ id: user._id }, process.env.JWT_REFRESH_SECRET, {
+    expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || "7d",
   });
 };
 
@@ -18,10 +28,12 @@ const registerUser = async (data) => {
   const hashedPassword = await bcrypt.hash(password, 10);
 
   const user = await User.create({ ...data, password: hashedPassword });
-  const token =  createToken(user);
+  const accessToken = createAccessToken(user);
+  const refreshToken = createRefreshToken(user);
 
   return {
-    token,
+    accessToken,
+    refreshToken,
     user: {
       id: user._id,
       name: user.name,
@@ -43,10 +55,12 @@ const loginUser = async (data) => {
     throw new ValidationError("Invalid credentials");
   }
 
-  const token = await createToken(user);
+  const accessToken = createAccessToken(user);
+  const refreshToken = createRefreshToken(user);
 
   return {
-    token,
+    accessToken,
+    refreshToken,
     user: {
       id: user._id,
       name: user.name,
@@ -56,4 +70,32 @@ const loginUser = async (data) => {
   };
 };
 
-module.exports = { registerUser, loginUser };
+const refreshAccessToken = async (refreshToken) => {
+  try {
+    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+
+    const user = await User.findById(decoded.id);
+
+    if (!user) {
+      throw new ValidationError("Invalid refresh token");
+    }
+
+    const accessToken = createAccessToken(user);
+
+    return {
+      accessToken,
+    };
+  } catch (error) {
+    if (error.name === "TokenExpiredError") {
+      throw new ValidationError("Refresh token expired");
+    }
+
+    if (error.name === "JsonWebTokenError") {
+      throw new ValidationError("Invalid refresh token");
+    }
+
+    throw error;
+  }
+};
+
+module.exports = { registerUser, loginUser, refreshAccessToken };

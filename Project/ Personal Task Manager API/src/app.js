@@ -12,6 +12,7 @@ const app = express();
 // security middleware
 app.use(cors(corsOptions));
 app.use(generalLimiter);
+app.use(helmet())
 
 app.use(express.json());
 app.use(logger);
@@ -24,10 +25,21 @@ app.use("/{*splat}", (req, res, next) => {
 });
 
 app.use((err, req, res, next) => {
-  res.status(err.statusCode || 500).json({
-    success: false,
-    error: { name: err.name, message: err.message },
-  });
+  const statusCode = err.statusCode || 500;
+
+  if (process.env.NODE_ENV === "development") {
+    // Full details — you're debugging
+    res.status(statusCode).json({
+      success: false,
+      error: { name: err.name, message: err.message, stack: err.stack },
+    });
+  } else {
+    // Production — safe, generic message only
+    res.status(statusCode).json({
+      success: false,
+      message: statusCode === 500 ? "Something went wrong" : err.message,
+    });
+  }
 });
 
 module.exports = app;
